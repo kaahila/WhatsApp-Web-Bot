@@ -86,7 +86,7 @@ class WhatsApp:
             except TimeoutException as e:
                 print(e.msg)
             self.browser.save_screenshot(loginQrScreenshot)
-        WebDriverWait(self.browser, wait).until(
+        WebDriverWait(self.browser, wait * 2).until(
             EC.presence_of_element_located(WhatsAppElements.search)
         )
 
