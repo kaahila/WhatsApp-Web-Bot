@@ -8,6 +8,7 @@
 
 import datetime as dt
 import json
+import re
 import time
 from urllib.parse import urlencode
 
@@ -97,14 +98,9 @@ class WhatsApp:
         )  # this will emojify all the emoji which is present as the text in string
         search = self.browser.find_element(*WhatsAppElements.search)
 
-        JS_ADD_TEXT_TO_INPUT = """
-          var elm = arguments[0], txt = arguments[1];
-          elm.value += txt;
-          elm.dispatchEvent(new Event('change'));
-          """
-
-        self.browser.execute_script(JS_ADD_TEXT_TO_INPUT, search, name)
-
+        regex = re.compile('[^a-zA-Z\d\s]')
+        name = regex.sub('', name).strip()
+        search.send_keys(name)
         search.send_keys(Keys.ENTER)  # we will send the name to the input key box
 
         try:
