@@ -8,6 +8,7 @@
 
 import datetime as dt
 import json
+import os.path
 import re
 import time
 from urllib.parse import urlencode
@@ -39,11 +40,15 @@ class WhatsAppElements:
         By.CSS_SELECTOR,
         "#side p.copyable-text.selectable-text",
     )
-    messageInput = (
+    current_chat_name = (
         By.CSS_SELECTOR,
-        "footer p.copyable-text.selectable-text",
+        "#main header span[aria-label]",
     )
-    loginQR = (
+    message_input = (
+        By.CSS_SELECTOR,
+        "#main footer p.copyable-text.selectable-text",
+    )
+    login_qr = (
         By.CSS_SELECTOR,
         "canvas",
     )
@@ -51,6 +56,21 @@ class WhatsAppElements:
         By.CSS_SELECTOR,
         ".bDS3i > div:nth-child(1) > div:nth-child(1) > span:nth-child(1)",
     )
+
+
+def clean_text(text: str):
+    regex = re.compile('[^a-zA-Z\d\s]')
+    return regex.sub('', text).strip()
+
+
+def init_session(session_name: str) -> str:
+    session_storage_dir = os.path.join(os.getcwd(), "sessions")
+    if not os.path.isdir(session_storage_dir):
+        os.mkdir(session_storage_dir)
+    session_sub_dir = os.path.join(session_storage_dir, session_name)
+    if not os.path.isdir(session_sub_dir):
+        os.mkdir(session_sub_dir)
+    return os.path.abspath(session_sub_dir)
 
 
 class WhatsApp:
@@ -63,13 +83,26 @@ class WhatsApp:
     timeout = 10  # The timeout is set for about ten seconds
 
     # This constructor will load all the emojies present in the json file and it will initialize the webdriver
-    def __init__(self, wait, loginQrScreenshot=None, session=None):
+    def __init__(self, wait, login_qr_screenshot=None, session_name=None,
+                 chromedriver_executable_path: str = "chromedriver.exe", headless: bool = True):
+        if not os.path.isfile(chromedriver_executable_path):
+            raise FileNotFoundError(
+                f"The cromedriver executable could not be found at path: {chromedriver_executable_path}.\n"
+                f"Get it from https://chromedriver.chromium.org/downloads")
+
         chrome_options = Options()
-        if session:
-            chrome_options.add_argument(f"--user-data-dir={session}")
+        chrome_options.add_argument("--window-size=1920,1200")
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+
+        if session_name:
+            chrome_options.add_argument(f"--user-data-dir={init_session(session_name)}")
+
+        if headless:
+            chrome_options.add_argument('--headless')
 
         self.browser = webdriver.Chrome(
-            options=chrome_options, executable_path="chromedriver.exe"
+            options=chrome_options, executable_path=chromedriver_executable_path
         )  # we are using chrome as our webbrowser
         self.browser.get("https://web.whatsapp.com/")
         # emoji.json is a json file which contains all the emojis
@@ -77,15 +110,15 @@ class WhatsApp:
             self.emoji = json.load(
                 emojies
             )  # This will load the emojies present in the json file into the dict
-        if loginQrScreenshot is not None:
+        if login_qr_screenshot is not None:
             try:
                 WebDriverWait(
                     self.browser,
                     wait,
-                ).until(EC.presence_of_element_located(WhatsAppElements.loginQR))
+                ).until(EC.presence_of_element_located(WhatsAppElements.login_qr))
+                self.browser.save_screenshot(login_qr_screenshot)
             except TimeoutException as e:
                 print(e.msg)
-            self.browser.save_screenshot(loginQrScreenshot)
         WebDriverWait(self.browser, wait * 2).until(
             EC.presence_of_element_located(WhatsAppElements.search)
         )
@@ -96,16 +129,10 @@ class WhatsApp:
         message = self.emojify(
             message
         )  # this will emojify all the emoji which is present as the text in string
-        search = self.browser.find_element(*WhatsAppElements.search)
-
-        regex = re.compile('[^a-zA-Z\d\s]')
-        name = regex.sub('', name).strip()
-        search.send_keys(name)
-        search.send_keys(Keys.ENTER)  # we will send the name to the input key box
-
+        self._switch_chat(name)
         try:
             send_msg = WebDriverWait(self.browser, self.timeout).until(
-                EC.presence_of_element_located(WhatsAppElements.messageInput)
+                EC.presence_of_element_located(WhatsAppElements.message_input)
             )
             messages = message.split("\n")
             for msg in messages:
@@ -121,6 +148,20 @@ class WhatsApp:
             return False
         except Exception:
             return False
+
+    def _switch_chat(self, name: str) -> bool:
+        """
+        name: the name of the chat to switch to
+        """
+        search = self.browser.find_element(*WhatsAppElements.search)
+        name = clean_text(name)
+        search.send_keys(name)
+        search.send_keys(Keys.ENTER)  # we will send the name to the input key box
+        current_chat_name = self.browser.find_element(*WhatsAppElements.current_chat_name)
+        if name != clean_text(current_chat_name.text):
+            self.goto_main()
+            return False
+        return True
 
     # This method will count the no of participants for the group name provided
     def participants_count_for_group(self, group_name):
