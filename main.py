@@ -4,7 +4,10 @@ whatsapp = WhatsApp(
     30,
     login_qr_screenshot="./screenshot.png",
     session_name="session",
-    headless=False
+    headless=True,
+    log_chat="Bot Log"
 )
-print(whatsapp.send_message("Bot Log", "This is a Bot test! :victory"))
-whatsapp.quit()
+try:
+    print(whatsapp.send_message("Bot Test", "This is a Bot test!"))
+finally:
+    whatsapp.quit()

@@ -19,7 +19,7 @@ from selenium.common.exceptions import (
     ElementNotVisibleException,
 )
 from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver import ChromeOptions
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.alert import Alert
 from selenium.webdriver.common.by import By
@@ -84,16 +84,21 @@ class WhatsApp:
 
     # This constructor will load all the emojies present in the json file and it will initialize the webdriver
     def __init__(self, wait, login_qr_screenshot=None, session_name=None,
-                 chromedriver_executable_path: str = "chromedriver.exe", headless: bool = True):
+                 chromedriver_executable_path: str = "chromedriver.exe", headless: bool = True, log_chat: str = ""):
+        self.log_chat = log_chat
         if not os.path.isfile(chromedriver_executable_path):
             raise FileNotFoundError(
                 f"The cromedriver executable could not be found at path: {chromedriver_executable_path}.\n"
                 f"Get it from https://chromedriver.chromium.org/downloads")
 
-        chrome_options = Options()
+        chrome_options = ChromeOptions()
+
+        chrome_options.add_experimental_option("useAutomationExtension", False)
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_argument("--window-size=1920,1200")
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument(
+            "user-agent=User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36")
 
         if session_name:
             chrome_options.add_argument(f"--user-data-dir={init_session(session_name)}")
@@ -101,27 +106,39 @@ class WhatsApp:
         if headless:
             chrome_options.add_argument('--headless')
 
-        self.browser = webdriver.Chrome(
-            options=chrome_options, executable_path=chromedriver_executable_path
-        )  # we are using chrome as our webbrowser
-        self.browser.get("https://web.whatsapp.com/")
         # emoji.json is a json file which contains all the emojis
         with open("emoji.json") as emojies:
             self.emoji = json.load(
                 emojies
             )  # This will load the emojies present in the json file into the dict
-        if login_qr_screenshot is not None:
-            try:
-                WebDriverWait(
-                    self.browser,
-                    wait,
-                ).until(EC.presence_of_element_located(WhatsAppElements.login_qr))
-                self.browser.save_screenshot(login_qr_screenshot)
-            except TimeoutException as e:
-                print(e.msg)
-        WebDriverWait(self.browser, wait * 2).until(
-            EC.presence_of_element_located(WhatsAppElements.search)
-        )
+
+        self.browser = webdriver.Chrome(
+            options=chrome_options, executable_path=chromedriver_executable_path
+        )  # we are using chrome as our webbrowser
+        try:
+            print("Launching Whatsapp Web Client")
+            self.browser.get("https://web.whatsapp.com/")
+            print("Loging in...")
+            if login_qr_screenshot is not None:
+                try:
+                    WebDriverWait(
+                        self.browser,
+                        wait,
+                    ).until(EC.presence_of_element_located((
+                        By.CSS_SELECTOR,
+                        f"{WhatsAppElements.search[1]}, {WhatsAppElements.login_qr[1]}"
+                    )))
+                    self.browser.save_screenshot(login_qr_screenshot)
+                except TimeoutException as e:
+                    print(e.msg)
+                    self.quit()
+            WebDriverWait(self.browser, wait * 2).until(
+                EC.presence_of_element_located(WhatsAppElements.search)
+            )
+            self.log("Bot Login successful")
+        except Exception as e:
+            self.quit()
+            raise e
 
     # This method is used to send the message to the individual person or a group
     # will return true if the message has been sent, false else
@@ -129,7 +146,8 @@ class WhatsApp:
         message = self.emojify(
             message
         )  # this will emojify all the emoji which is present as the text in string
-        self._switch_chat(name)
+        if not self._switch_chat(name):
+            raise NameError(f"The chat {name} is invalid.")
         try:
             send_msg = WebDriverWait(self.browser, self.timeout).until(
                 EC.presence_of_element_located(WhatsAppElements.message_input)
@@ -153,6 +171,8 @@ class WhatsApp:
         """
         name: the name of the chat to switch to
         """
+        print(f"Switching Chat to: {name}")
+        time.sleep(0.5)
         search = self.browser.find_element(*WhatsAppElements.search)
         name = clean_text(name)
         search.send_keys(name)
@@ -162,6 +182,13 @@ class WhatsApp:
             self.goto_main()
             return False
         return True
+
+    def log(self, message: str) -> None:
+        if len(message) < 1 or len(self.log_chat) < 1:
+            return
+        print(f"Log: {message}")
+        self.send_message(self.log_chat, message)
+        self.goto_main()
 
     # This method will count the no of participants for the group name provided
     def participants_count_for_group(self, group_name):
@@ -276,6 +303,8 @@ class WhatsApp:
 
     # This method is used to get the main page
     def goto_main(self):
+        print("Going to main")
+        time.sleep(0.5)
         try:
             self.browser.refresh()
             Alert(self.browser).accept()
