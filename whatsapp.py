@@ -11,7 +11,9 @@ import json
 import os.path
 import re
 import time
+from typing import Callable
 from urllib.parse import urlencode
+import threading
 
 from selenium import webdriver
 from selenium.common.exceptions import (
@@ -58,6 +60,24 @@ class WhatsAppElements:
     )
 
 
+class SetInterval:
+    def __init__(self, interval: float, action: Callable, **kwargs):
+        self.interval = interval
+        self.action = action
+        self.stop_event = threading.Event()
+        thread = threading.Thread(target=self.__set_interval, kwargs=kwargs)
+        thread.start()
+
+    def __set_interval(self):
+        next_time = time.time() + self.interval
+        while not self.stop_event.wait(next_time - time.time()):
+            next_time += self.interval
+            self.action()
+
+    def cancel(self):
+        self.stop_event.set()
+
+
 def clean_text(text: str):
     regex = re.compile('[^a-zA-Z\d\s]')
     return regex.sub('', text).strip()
@@ -84,7 +104,8 @@ class WhatsApp:
 
     # This constructor will load all the emojies present in the json file and it will initialize the webdriver
     def __init__(self, wait, login_qr_screenshot=None, session_name=None,
-                 chromedriver_executable_path: str = "chromedriver.exe", headless: bool = True, log_chat: str = ""):
+                 chromedriver_executable_path: str = "chromedriver.exe", headless: bool = True, log_chat: str = "",
+                 keep_session_alive=False):
         self.log_chat = log_chat
         if not os.path.isfile(chromedriver_executable_path):
             raise FileNotFoundError(
@@ -129,6 +150,7 @@ class WhatsApp:
                         f"{WhatsAppElements.search[1]}, {WhatsAppElements.login_qr[1]}"
                     )))
                     self.browser.save_screenshot(login_qr_screenshot)
+                    print(f"Saved login qr screenshot at {login_qr_screenshot}")
                 except TimeoutException as e:
                     print(e.msg)
                     self.quit()
@@ -139,6 +161,11 @@ class WhatsApp:
         except Exception as e:
             self.quit()
             raise e
+        if keep_session_alive:
+            SetInterval(1, lambda: keep_alive_session(session_name=session_name, log_chat=log_chat, parent_client=self))
+
+    def __del__(self):
+        self.quit()
 
     # This method is used to send the message to the individual person or a group
     # will return true if the message has been sent, false else
@@ -157,6 +184,7 @@ class WhatsApp:
                 send_msg.send_keys(msg)
                 send_msg.send_keys(Keys.SHIFT + Keys.ENTER)
             send_msg.send_keys(Keys.ENTER)
+            time.sleep(2)  # Wait a short time to send the msg
             return True
         except TimeoutException:
             raise TimeoutError(
@@ -846,3 +874,21 @@ class WhatsApp:
     def quit(self):
         time.sleep(2)
         self.browser.quit()
+
+
+def keep_alive_session(session_name: str, parent_client: WhatsApp, log_chat: str = ""):
+    print("\nKeeping Session Alive")
+    try:
+        if 'null' not in str(parent_client.get_driver()):
+            whatsapp = WhatsApp(
+                60,
+                session_name=session_name,
+                headless=True,
+                log_chat=log_chat
+            )
+            whatsapp.quit()
+        else:
+            print("Parent Session is currently running. Nothing to do.")
+    except Exception:
+        print("Keeping Session Alive Call failed")
+    print("\n")
